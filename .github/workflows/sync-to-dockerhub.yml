@@ -3,7 +3,7 @@ name: Sync Full Image Paths
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 5 * * *' # 每天凌晨5点
+    - cron: '0 5 * * 5' # 每周五凌晨5点
 
 jobs:
   sync-direct:
