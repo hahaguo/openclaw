@@ -1,0 +1,86 @@
+name: Sync Full Image Paths
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * *' # 每天凌晨5点
+
+jobs:
+  sync-direct:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        # 【关键】直接定义完整的源镜像和目标镜像字符串
+        include:
+          # 场景 1: 简单的版本重命名
+          - source: "ghcr.io/ggml-org/llama.cpp:full"
+            target: "docker.io/hahaguo/llama.cpp:latest"
+            
+          # 场景 2: 将开发分支标签同步为 latest
+          - source: "ghcr.io/openclaw/openclaw:latest"
+            target: "docker.io/hahaguo/openclaw:latest"
+
+    steps:
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and Push Direct Mapping
+        run: |
+          SOURCE_IMG="${{ matrix.source }}"
+          TARGET_IMG="${{ matrix.target }}"
+          
+          echo "=========================================="
+          echo "Starting Sync Task:"
+          echo "  FROM: $SOURCE_IMG"
+          echo "  TO:   $TARGET_IMG"
+          echo "=========================================="
+          
+          # 1. 拉取源镜像
+          # 如果拉取失败，跳过当前任务，不中断其他并行任务
+          if ! docker pull "$SOURCE_IMG"; then
+            echo "::error::Failed to pull source image: $SOURCE_IMG"
+            exit 1 
+          fi
+          
+          # 2. 打标
+          # 注意：这里直接使用目标完整名称作为新标签
+          if ! docker tag "$SOURCE_IMG" "$TARGET_IMG"; then
+            echo "::error::Failed to tag image."
+            exit 1
+          fi
+          
+          # 3. 推送
+          if docker push "$TARGET_IMG"; then
+            echo "::notice::Successfully pushed $TARGET_IMG"
+          else
+            echo "::error::Failed to push target image: $TARGET_IMG"
+            exit 1
+          fi
+          
+          # 4. 清理本地空间
+          docker rmi "$SOURCE_IMG" "$TARGET_IMG"
+          
+          echo "Task completed for $SOURCE_IMG -> $TARGET_IMG"
+
+      # 【可选】如果需要完美支持多架构 (Multi-arch)，请使用 skopeo 替代上面的 docker 步骤
+      # - name: Sync with Skopeo (Recommended for Multi-arch)
+      #   run: |
+      #     sudo apt-get update && sudo apt-get install -y skopeo
+      #     skopeo copy \
+      #       --src-creds "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" \
+      #       --dest-creds "${{ secrets.DOCKERHUB_USERNAME }}:${{ secrets.DOCKERHUB_TOKEN }}" \
+      #       --multi-arch all \
+      #       "docker://${{ matrix.source }}" \
+      #       "docker://${{ matrix.target }}"
